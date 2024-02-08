@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -15,7 +16,7 @@ type Client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	// Buffered channel of outbound messages.
-	send chan *Message
+	send chan []byte
 }
 
 var upgrader = websocket.Upgrader{
@@ -34,10 +35,6 @@ const (
 	maxMessageSize = 512
 )
 
-var (
-	newline = []byte{'\n'}
-)
-
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -47,7 +44,7 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 
 	id := uuid.New()
 
-	client := &Client{hub: hub, conn: conn, send: make(chan *Message, 256), id: id.String()}
+	client := &Client{hub: hub, conn: conn, send: make(chan []byte, 256), id: id.String()}
 	client.hub.register <- client
 
 	go client.writePump()
@@ -78,26 +75,12 @@ func (c *Client) writePump() {
 				return
 			}
 
-			msgBytes, err := json.Marshal(msg)
-			if err != nil {
-				// handle error
-				return
-			}
-
-			w.Write(msgBytes)
+			w.Write(msg)
 
 			// Add queued chat messages to the current websocket message.
 			n := len(c.send)
 			for i := 0; i < n; i++ {
-				w.Write(newline)
-
-				msgBytes, err := json.Marshal(<-c.send)
-				if err != nil {
-					// handle error
-					return
-				}
-
-				w.Write(msgBytes)
+				w.Write(msg)
 			}
 
 			if err := w.Close(); err != nil {
@@ -128,7 +111,8 @@ func (c *Client) readPump() {
 	})
 
 	for {
-		_ , text, err := c.conn.ReadMessage()
+		_, text, err := c.conn.ReadMessage()
+		log.Printf("value: %v", string(text))
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
@@ -136,6 +120,15 @@ func (c *Client) readPump() {
 			break
 		}
 
-		c.hub.broadcast <- &Message{ClientID: c.id, Text: string(text)}
+		msg := &Message{}
+
+		reader := bytes.NewReader(text)
+		decoder := json.NewDecoder(reader)
+		err = decoder.Decode(msg)
+		if err != nil {
+			log.Printf("error: %v", err)
+		}
+
+		c.hub.broadcast <- &Message{ClientID: c.id, Text: msg.Text}
 	}
 }

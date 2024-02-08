@@ -16,7 +16,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.ServeFile(w, r, "index.html")
+	http.ServeFile(w, r, "templates/index.html")
 }
 
 func main() {

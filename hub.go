@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"html/template"
 	"log"
 	"sync"
 )
@@ -9,7 +11,7 @@ import (
 // clients.
 type Hub struct {
 	sync.RWMutex
-	
+
 	clients map[*Client]bool
 
 	broadcast  chan *Message
@@ -45,9 +47,8 @@ func (h *Hub) run() {
 
 			log.Printf("client registered %s", client.id)
 
-
 			for _, msg := range h.messages {
-				client.send <- msg
+				client.send <- getMessageTemplate(msg)
 			}
 		case client := <-h.unregister:
 			h.Lock()
@@ -63,7 +64,7 @@ func (h *Hub) run() {
 
 			for client := range h.clients {
 				select {
-				case client.send <- msg:
+				case client.send <- getMessageTemplate(msg):
 				default:
 					close(client.send)
 					delete(h.clients, client)
@@ -72,4 +73,20 @@ func (h *Hub) run() {
 			h.RUnlock()
 		}
 	}
+}
+
+func getMessageTemplate(msg *Message) []byte {
+	tmpl, err := template.ParseFiles("templates/message.html")
+	if err != nil {
+		log.Fatalf("template parsing: %s", err)
+	}
+
+	// Render the template with the message as data.
+	var renderedMessage bytes.Buffer
+	err = tmpl.Execute(&renderedMessage, msg)
+	if err != nil {
+		log.Fatalf("template execution: %s", err)
+	}
+
+	return renderedMessage.Bytes()
 }
